@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # Servicio de Base de Datos PostgreSQL para Strapi
+  postgres:
+    image: postgres:14-alpine # Usamos una imagen oficial de PostgreSQL
+    ports:
+      - "5433:5432" # Mapea el puerto local 5433 → Contenedor 5432
+    environment:
+      # Estas variables se cargarán desde tu archivo .env
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Volumen persistente para los datos de la DB
+    healthcheck: # Healthcheck para asegurar que la DB esté lista antes que Strapi
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Servicio de Backend Strapi
+  strapi:
+    build:
+      context: ./backend/strapi # Ruta al Dockerfile de Strapi
+      dockerfile: Dockerfile
+    ports:
+      - "1337:1337" # Mapea el puerto 1337 del contenedor al puerto 1337 de tu máquina
+    environment:
+      # Variables de entorno para la conexión a la base de datos
+      DATABASE_CLIENT: postgres
+      DATABASE_HOST: postgres # Nombre del servicio de la DB en Docker Compose
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      # Variables de entorno específicas de Strapi (para desarrollo local)
+      NODE_ENV: development # Usar development para ver el panel de administración y hot-reloading
+      APP_KEYS: ${APP_KEYS}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
+      API_TOKEN_SALT: ${API_TOKEN_SALT}
+      # CORS para permitir la conexión desde Next.js local
+      STRAPI_CORS_ORIGIN: http://localhost:3000,http://localhost:1337
+    volumes:
+      # Monta tu código local en el contenedor para desarrollo en vivo (hot-reloading)
+      - ./backend/strapi:/app
+      # Este volumen anónimo evita que el node_modules del host sobrescriba el del contenedor,
+      # asegurando que las dependencias instaladas en el Dockerfile sean las usadas.
+      - /app/node_modules
+    # **IMPORTANTE:** Este comando inicia Strapi en modo desarrollo,
+    # lo que activará la construcción del panel de administración al inicio.
+    command: yarn develop
+    depends_on:
+      postgres:
+        condition: service_healthy # Espera a que la DB esté saludable
+
+  # Servicio de Frontend Next.js
+  nextjs:
+    build:
+      context: ./frontend/nextjs # Ruta al Dockerfile de Next.js
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000" # Mapea el puerto 3000 del contenedor al puerto 3000 de tu máquina
+    environment:
+      # Variable de entorno para que Next.js sepa dónde está Strapi
+      # 'strapi' es el nombre del servicio de Strapi dentro de la red de Docker Compose
+      NEXT_PUBLIC_STRAPI_API_URL: http://strapi:1337
+    volumes:
+      # Monta tu código local en el contenedor para hot-reloading
+      - ./frontend/nextjs:/app
+      # Evita que el node_modules del host sobrescriba el del contenedor
+      - /app/node_modules
+    # **IMPORTANTE:** Este comando inicia Next.js en modo desarrollo con hot-reloading.
+    command: yarn dev
+    depends_on:
+      strapi:
+        condition: service_started # Espera a que Strapi se inicie
+
+# Volúmenes para persistencia de datos
+volumes:
+  postgres_data: # Define el volumen para PostgreSQL
